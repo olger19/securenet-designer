@@ -1,0 +1,43 @@
+# Carpetas de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+.env/
+
+# Base de datos local (SQLite)
+*.db
+*.sqlite3
+instance/
+
+# Archivos de configuración sensibles
+.env.local
+.env.development
+.env.production
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Cachés de herramientas
+.pytest_cache/
+.mypy_cache/
+.cache/
+.coverage
+htmlcov/
+
+# Config de IDE/Editor
+.vscode/
+.idea/
+*.code-workspace
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
