@@ -11,19 +11,19 @@ import 'reactflow/dist/style.css'
 const initialNodes = [
   {
     id: '1',
-    position: { x: 100, y: 100 },
+    position: { x: 200, y: 100 },
     data: { label: 'R1 (Router - Interna)', tipo: 'router', zona: 'interna' },
     type: 'default',
   },
   {
     id: '2',
-    position: { x: 100, y: 250 },
+    position: { x: 200, y: 250 },
     data: { label: 'FW1 (Firewall - DMZ)', tipo: 'firewall', zona: 'dmz' },
     type: 'default',
   },
   {
     id: '3',
-    position: { x: 100, y: 400 },
+    position: { x: 200, y: 400 },
     data: { label: 'SRV_WEB (Servidor - DMZ)', tipo: 'servidor', zona: 'dmz' },
     type: 'default',
   },
@@ -34,17 +34,44 @@ const initialEdges = [
   { id: 'e2-3', source: '2', target: '3' },
 ]
 
-const nodeTypes = {}    // por ahora no usamos nodos personalizados
-const edgeTypes = {}    // ni edges personalizados
+// React Flow por ahora sin nodos ni edges personalizados
+const nodeTypes = {}
+const edgeTypes = {}
 
 function App() {
   // hooks recomendados por React Flow para manejar nodos y edges
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, _setEdges, onEdgesChange] = useEdgesState(initialEdges)
+  const [edges, _setEdges, onEdgesChange] = useEdgesState(initialEdges) // ReactFlow maneja edges internamente, no los modificamos directamente
 
   const [backendStatus, setBackendStatus] = useState('Desconocido')
   const [topologias, setTopologias] = useState([])
+  const [selectedTopologyId, setSelectedTopologyId] = useState(null)
+
   const [selectedNodeId, setSelectedNodeId] = useState(null)
+
+  const [politicas, setPoliticas] = useState([])
+  const [escenarios, setEscenarios] = useState([])
+  const [simResultados, setSimResultados] = useState([])
+
+  const [nuevaPolitica, setNuevaPolitica] = useState({
+    origen: 'interna',
+    destino: 'externa',
+    servicio: 'http',
+    protocolo: 'tcp',
+    puerto: 80,
+    accion: 'denegar',
+    descripcion: '',
+  })
+
+  const [nuevoEscenario, setNuevoEscenario] = useState({
+    tipo_origen: 'zona',
+    origen: 'interna',
+    tipo_destino: 'zona',
+    destino: 'externa',
+    servicio: 'http',
+    protocolo: 'tcp',
+    puerto: 80,
+  })
 
   // Probar conexión con backend 
   useEffect(() => {
@@ -72,6 +99,40 @@ function App() {
   useEffect(() => {
     cargarTopologias()
   }, [])
+
+  const cargarPoliticas = async (idTopologia) => {
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${idTopologia}/politicas`,
+      )
+      const data = await res.json()
+      setPoliticas(data)
+    } catch (err) {
+      console.error(err)
+      setPoliticas([])
+    }
+  }
+
+  const cargarEscenarios = async (idTopologia) => {
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${idTopologia}/escenarios`,
+      )
+      const data = await res.json()
+      setEscenarios(data)
+    } catch (err) {
+      console.error(err)
+      setEscenarios([])
+    }
+  }
+
+  useEffect(() => {
+    if (selectedTopologyId) {
+      cargarPoliticas(selectedTopologyId)
+      cargarEscenarios(selectedTopologyId)
+      setSimResultados([])
+    }
+  }, [selectedTopologyId])
 
   // Crear una topología de prueba en el backend
   const handleGuardarTopologia = async () => {
@@ -105,11 +166,16 @@ function App() {
       })
       const data = await res.json()
       alert(`Topología guardada con ID ${data.id_topologia}`)
-      cargarTopologias()
+      await cargarTopologias()
+      setSelectedTopologyId(data.id_topologia)
     } catch (err) {
       console.error(err)
       alert('Error al guardar topología')
     }
+  }
+
+  const handleSeleccionarTopologia = (idTopologia) => {
+    setSelectedTopologyId(idTopologia)
   }
 
   // ----- Editor: anadir nodos ----
@@ -147,7 +213,7 @@ function App() {
     setNodes((nds) => [...nds, newNode])
   }
 
-  // ---- Editor: selección de nodo ----
+  // ---------- SELECCION Y PROPIEDADES DEL NODO ----------
   const onNodeClick = (_, node) => {
     setSelectedNodeId(node.id)
   }
@@ -198,6 +264,111 @@ function App() {
     const zonaText = zoneLabelMap[data.zona] || data.zona || 'Sin zona'
     return `${tipoText} (${zonaText})`
   }
+
+  const handleChangeNuevaPolitica = (field, value) => {
+    setNuevaPolitica((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  const handleCrearPolitica = async (e) => {
+    e.preventDefault()
+    if (!selectedTopologyId) {
+      alert('Selecciona una topología primero')
+      return
+    }
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${selectedTopologyId}/politicas`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...nuevaPolitica,
+            puerto:
+              nuevaPolitica.puerto === '' ? null : Number(nuevaPolitica.puerto),
+          }),
+        },
+      )
+      const data = await res.json()
+      console.log('Política creada:', data)
+      await cargarPoliticas(selectedTopologyId)
+    } catch (err) {
+      console.error(err)
+      alert('Error al crear política')
+    }
+  }
+
+  // ---------- FORMULARIO ESCENARIOS ----------
+
+  const handleChangeNuevoEscenario = (field, value) => {
+    setNuevoEscenario((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  const handleCrearEscenario = async (e) => {
+    e.preventDefault()
+    if (!selectedTopologyId) {
+      alert('Selecciona una topología primero')
+      return
+    }
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${selectedTopologyId}/escenarios`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...nuevoEscenario,
+            puerto:
+              nuevoEscenario.puerto === ''
+                ? null
+                : Number(nuevoEscenario.puerto),
+          }),
+        },
+      )
+      const data = await res.json()
+      console.log('Escenario creado:', data)
+      await cargarEscenarios(selectedTopologyId)
+    } catch (err) {
+      console.error(err)
+      alert('Error al crear escenario')
+    }
+  }
+
+  // ---------- SIMULACIÓN ----------
+
+  const handleSimular = async () => {
+    if (!selectedTopologyId) {
+      alert('Selecciona una topología primero')
+      return
+    }
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${selectedTopologyId}/simular`,
+        {
+          method: 'POST',
+        },
+      )
+      const data = await res.json()
+      setSimResultados(data)
+      await cargarEscenarios(selectedTopologyId)
+    } catch (err) {
+      console.error(err)
+      alert('Error al simular')
+    }
+  }
+
 
 
   return (
@@ -253,12 +424,31 @@ function App() {
         <hr style={{ borderColor: '#444' }} />
 
         <h3>Topologías guardadas</h3>
-        <ul>
-          {topologias.map((t) => (
-            <li key={t.id_topologia}>
-              #{t.id_topologia} - {t.nombre}
-            </li>
-          ))}
+        {topologias.length === 0 && <p>No hay topologías aún.</p>}
+        <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
+          {topologias.map((t) => {
+            const isSelected = t.id_topologia === selectedTopologyId
+            return (
+              <li key={t.id_topologia} style={{ marginBottom: '4px' }}>
+                <button
+                  onClick={() => handleSeleccionarTopologia(t.id_topologia)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '4px 6px',
+                    borderRadius: '4px',
+                    border: isSelected ? '1px solid #0af' : '1px solid #444',
+                    background: isSelected ? '#0b2533' : '#222',
+                    color: '#f5f5f5',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                  }}
+                >
+                  #{t.id_topologia} - {t.nombre}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       </div>
 
@@ -287,14 +477,24 @@ function App() {
         {/* Panel derecho: propiedades del nodo */}
         <div
           style={{
-            width: '260px',
+            width: '320px',
             borderLeft: '1px solid #333',
             background: '#181818',
             color: '#f5f5f5',
             padding: '12px',
-            fontSize: '14px',
+            fontSize: '13px',
+            overflow: 'auto',
           }}
         >
+          <h3>Topología seleccionada</h3>
+          {selectedTopologyId ? (
+            <p>ID: {selectedTopologyId}</p>
+          ) : (
+            <p>Ninguna topología seleccionada.</p>
+          )}
+
+          <hr style={{ borderColor: '#444' }} />
+
           <h3>Propiedades del nodo</h3>
           {selectedNode ? (
             <>
@@ -341,6 +541,238 @@ function App() {
             </>
           ) : (
             <p>Selecciona un nodo en el diagrama para ver sus propiedades.</p>
+          )}
+
+          <hr style={{ borderColor: '#444' }} />
+
+          <h3>Nueva política de seguridad</h3>
+          <form onSubmit={handleCrearPolitica}>
+            <label>
+              Origen (zona/nodo)
+              <input
+                type="text"
+                value={nuevaPolitica.origen}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('origen', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Destino (zona/nodo)
+              <input
+                type="text"
+                value={nuevaPolitica.destino}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('destino', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Servicio
+              <input
+                type="text"
+                value={nuevaPolitica.servicio}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('servicio', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Protocolo
+              <input
+                type="text"
+                value={nuevaPolitica.protocolo}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('protocolo', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Puerto
+              <input
+                type="number"
+                value={nuevaPolitica.puerto}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('puerto', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Acción
+              <select
+                value={nuevaPolitica.accion}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('accion', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              >
+                <option value="permitir">Permitir</option>
+                <option value="denegar">Denegar</option>
+              </select>
+            </label>
+            <label>
+              Descripción
+              <textarea
+                value={nuevaPolitica.descripcion}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('descripcion', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <button type="submit" style={{ marginBottom: '8px' }}>
+              Guardar política
+            </button>
+          </form>
+
+          {politicas.length > 0 && (
+            <>
+              <p>
+                <strong>Políticas definidas:</strong>
+              </p>
+              <ul>
+                {politicas.map((p) => (
+                  <li key={p.id_politica}>
+                    #{p.id_politica} {p.origen} → {p.destino} [{p.servicio}] -{' '}
+                    {p.accion}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <hr style={{ borderColor: '#444' }} />
+
+          <h3>Nuevo escenario de flujo</h3>
+          <form onSubmit={handleCrearEscenario}>
+            <label>
+              Tipo origen
+              <select
+                value={nuevoEscenario.tipo_origen}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('tipo_origen', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              >
+                <option value="zona">Zona</option>
+                <option value="nodo">Nodo</option>
+              </select>
+            </label>
+            <label>
+              Origen
+              <input
+                type="text"
+                value={nuevoEscenario.origen}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('origen', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+
+            <label>
+              Tipo destino
+              <select
+                value={nuevoEscenario.tipo_destino}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('tipo_destino', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              >
+                <option value="zona">Zona</option>
+                <option value="nodo">Nodo</option>
+              </select>
+            </label>
+            <label>
+              Destino
+              <input
+                type="text"
+                value={nuevoEscenario.destino}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('destino', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+
+            <label>
+              Servicio
+              <input
+                type="text"
+                value={nuevoEscenario.servicio}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('servicio', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Protocolo
+              <input
+                type="text"
+                value={nuevoEscenario.protocolo}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('protocolo', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+            <label>
+              Puerto
+              <input
+                type="number"
+                value={nuevoEscenario.puerto}
+                onChange={(e) =>
+                  handleChangeNuevoEscenario('puerto', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              />
+            </label>
+
+            <button type="submit" style={{ marginBottom: '8px' }}>
+              Guardar escenario
+            </button>
+          </form>
+
+          {escenarios.length > 0 && (
+            <>
+              <p>
+                <strong>Escenarios definidos:</strong>
+              </p>
+                {escenarios.map((e) => (
+                  <div key={e.id_escenario}>
+                    #{e.id_escenario} {e.origen} → {e.destino} [{e.servicio}] –{' '}
+                    {e.resultado || 'pendiente'}
+                  </div>
+                ))}
+            </>
+          )}
+
+          <hr style={{ borderColor: '#444' }} />
+
+          <h3>Simulación</h3>
+          <button onClick={handleSimular} style={{ marginBottom: '8px' }}>
+            Ejecutar simulación
+          </button>
+
+          {simResultados.length > 0 && (
+            <>
+              <p>
+                <strong>Resultados:</strong>
+              </p>
+              <ul>
+                {simResultados.map((r) => (
+                  <li key={r.id_escenario}>
+                    Escenario #{r.id_escenario}: {r.resultado} – {r.detalle}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       </div>
