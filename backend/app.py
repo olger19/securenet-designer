@@ -1,8 +1,13 @@
 from datetime import datetime
 
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
+## PDF
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 db = SQLAlchemy()
 
@@ -47,8 +52,14 @@ class PoliticaSeguridad(db.Model):
     id_politica = db.Column(db.Integer, primary_key=True, autoincrement=True)
     id_topologia = db.Column(db.Integer, db.ForeignKey("topologia.id_topologia"), nullable=False)
 
-    origen = db.Column(db.String(100), nullable=False)       # zona o nodo
-    destino = db.Column(db.String(100), nullable=False)      # zona o nodo
+    # zona o nodo
+    tipo_origen = db.Column(db.String(20), nullable=False, default="zona")
+    origen = db.Column(db.String(100), nullable=False)       
+
+    # zona o nodo
+    tipo_destino = db.Column(db.String(20), nullable=False, default="zona")
+    destino = db.Column(db.String(100), nullable=False) 
+
     servicio = db.Column(db.String(50), nullable=False)      # http, https, icmp, etc.
     protocolo = db.Column(db.String(10), nullable=True)      # tcp, udp, icmp
     puerto = db.Column(db.Integer, nullable=True)            # 80, 443, etc.
@@ -234,7 +245,9 @@ def create_app():
             resultado.append(
                 {
                     "id_politica": p.id_politica,
+                    "tipo_origen": p.tipo_origen,
                     "origen": p.origen,
+                    "tipo_destino": p.tipo_destino,
                     "destino": p.destino,
                     "servicio": p.servicio,
                     "protocolo": p.protocolo,
@@ -251,7 +264,9 @@ def create_app():
 
         politica = PoliticaSeguridad(
             id_topologia=id_topologia,
+            tipo_origen=data.get("tipo_origen", "zona"),
             origen=data.get("origen"),
+            tipo_destino=data.get("tipo_destino", "zona"),
             destino=data.get("destino"),
             servicio=data.get("servicio"),
             protocolo=data.get("protocolo"),
@@ -317,37 +332,88 @@ def create_app():
             }
         ), 201
     
+    def _resolver_zona_de_nodo(nombre_nodo, nodos):
+        """Busca un nodo por nombre y devuelve su zona_seguridad (o None)."""
+        for n in nodos:
+            if n.nombre == nombre_nodo:
+                return n.zona_seguridad
+        return None
+
     # -------- SIMULACION BASICA --------
 
     @app.post("/topologias/<int:id_topologia>/simular")
     def simular_flujo(id_topologia):
         politicas = PoliticaSeguridad.query.filter_by(id_topologia=id_topologia).all()
         escenarios = EscenarioFlujo.query.filter_by(id_topologia=id_topologia).all()
+        nodos = Nodo.query.filter_by(id_topologia=id_topologia).all()
 
         resultados = []
 
         for esc in escenarios:
-            # Buscar política que matchee origen, destino y servicio
-            politica_match = None
-            for pol in politicas:
-                if (
-                    pol.origen == esc.origen
-                    and pol.destino == esc.destino
-                    and pol.servicio == esc.servicio
-                ):
-                    politica_match = pol
-                    break
+            # Construimos "claves" de origen/destino que pueden matchear políticas
+            origen_claves = [(esc.tipo_origen, esc.origen)]
+            destino_claves = [(esc.tipo_destino, esc.destino)]
 
-            if politica_match:
-                if politica_match.accion.lower() == "denegar":
+            # Si el escenario es por nodo, también agregamos su zona como posible match
+            if esc.tipo_origen == "nodo":
+                zona_o = _resolver_zona_de_nodo(esc.origen, nodos)
+                if zona_o:
+                    origen_claves.append(("zona", zona_o))
+
+            if esc.tipo_destino == "nodo":
+                zona_d = _resolver_zona_de_nodo(esc.destino, nodos)
+                if zona_d:
+                    destino_claves.append(("zona", zona_d))
+
+            mejor_politica = None
+            mejor_score = -1
+
+            for pol in politicas:
+                # servicio debe coincidir
+                if pol.servicio != esc.servicio:
+                    continue
+
+                # Protocolo y puerto: si la política los define, deben coincidir
+                if pol.protocolo and esc.protocolo and pol.protocolo != esc.protocolo:
+                    continue
+                if pol.puerto and esc.puerto and pol.puerto != esc.puerto:
+                    continue
+
+                if (pol.tipo_origen, pol.origen) not in origen_claves:
+                    continue
+                if (pol.tipo_destino, pol.destino) not in destino_claves:
+                    continue
+
+                # Calculamos un "score" de especificidad
+                score = 0
+                if pol.tipo_origen == "nodo":
+                    score += 1
+                if pol.tipo_destino == "nodo":
+                    score += 1
+
+                if score > mejor_score:
+                    mejor_score = score
+                    mejor_politica = pol
+
+            if mejor_politica:
+                if mejor_politica.accion.lower() == "denegar":
                     esc.resultado = "bloqueado"
-                    esc.detalle = f"Bloqueado por política {politica_match.id_politica}"
+                    esc.detalle = (
+                        f"Bloqueado por política #{mejor_politica.id_politica} "
+                        f"({mejor_politica.tipo_origen} {mejor_politica.origen} -> "
+                        f"{mejor_politica.tipo_destino} {mejor_politica.destino})"
+                    )
                 else:
                     esc.resultado = "permitido"
-                    esc.detalle = f"Permitido por política {politica_match.id_politica}"
+                    esc.detalle = (
+                        f"Permitido por política #{mejor_politica.id_politica} "
+                        f"({mejor_politica.tipo_origen} {mejor_politica.origen} -> "
+                        f"{mejor_politica.tipo_destino} {mejor_politica.destino})"
+                    )
             else:
+                # Política por defecto: permitido
                 esc.resultado = "permitido"
-                esc.detalle = "No se encontró política específica; permitido por defecto"
+                esc.detalle = "No se encontró política aplicable: permitido por defecto"
 
             resultados.append(
                 {
@@ -359,6 +425,142 @@ def create_app():
 
         db.session.commit()
         return jsonify(resultados)
+    
+    @app.get("/topologias/<int:id_topologia>/reporte")
+    def generar_reporte(id_topologia):
+        # 1. Obtener datos desde la BD
+        topologia = Topologia.query.get_or_404(id_topologia)
+        nodos = Nodo.query.filter_by(id_topologia=id_topologia).all()
+        enlaces = Enlace.query.filter_by(id_topologia=id_topologia).all()
+        politicas = PoliticaSeguridad.query.filter_by(id_topologia=id_topologia).all()
+        escenarios = EscenarioFlujo.query.filter_by(id_topologia=id_topologia).all()
+
+        # 2. Crear PDF en memoria
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+
+        y = height - 50
+
+        # Título
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(50, y, "SecureNet Designer - Reporte de Evaluación de Seguridad")
+        y -= 30
+
+        # Datos generales de la topología
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, f"Topología ID: {topologia.id_topologia}")
+        y -= 15
+        p.setFont("Helvetica", 11)
+        p.drawString(50, y, f"Nombre: {topologia.nombre}")
+        y -= 15
+        if topologia.descripcion:
+            p.drawString(50, y, f"Descripción: {topologia.descripcion[:80]}")
+            y -= 15
+        if topologia.autor:
+            p.drawString(50, y, f"Autor: {topologia.autor}")
+            y -= 15
+        p.drawString(50, y, f"Fecha creación: {topologia.fecha_creacion}")
+        y -= 25
+
+        # Nodos
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "Nodos de la topología:")
+        y -= 18
+        p.setFont("Helvetica", 10)
+        for n in nodos:
+            texto = f"- {n.id_nodo}: {n.nombre} (tipo={n.tipo}, zona={n.zona_seguridad}, pos=({n.posicion_x}, {n.posicion_y}))"
+            p.drawString(50, y, texto[:110])
+            y -= 12
+            if y < 80:
+                p.showPage()
+                y = height - 50
+                p.setFont("Helvetica", 10)
+
+        y -= 10
+
+        # Enlaces
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "Enlaces:")
+        y -= 18
+        p.setFont("Helvetica", 10)
+        for e in enlaces:
+            texto = f"- enlace {e.id_enlace}: {e.id_nodo_origen} -> {e.id_nodo_destino}"
+            p.drawString(50, y, texto[:110])
+            y -= 12
+            if y < 80:
+                p.showPage()
+                y = height - 50
+                p.setFont("Helvetica", 10)
+
+        y -= 10
+
+        # Políticas
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "Políticas de seguridad:")
+        y -= 18
+        p.setFont("Helvetica", 10)
+        if not politicas:
+            p.drawString(50, y, "- No hay políticas definidas.")
+            y -= 12
+        else:
+            for pol in politicas:
+                texto = (
+                    f"- #{pol.id_politica}: {pol.origen} -> {pol.destino} "
+                    f"[servicio={pol.servicio}, proto={pol.protocolo}, puerto={pol.puerto}, "
+                    f"accion={pol.accion}]"
+                )
+                p.drawString(50, y, texto[:110])
+                y -= 12
+                if pol.descripcion:
+                    p.drawString(60, y, f"  desc: {pol.descripcion[:100]}")
+                    y -= 12
+                if y < 80:
+                    p.showPage()
+                    y = height - 50
+                    p.setFont("Helvetica", 10)
+
+        y -= 10
+
+        # Escenarios y resultados
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "Escenarios de flujo y resultados:")
+        y -= 18
+        p.setFont("Helvetica", 10)
+        if not escenarios:
+            p.drawString(50, y, "- No hay escenarios definidos.")
+            y -= 12
+        else:
+            for esc in escenarios:
+                texto = (
+                    f"- Escenario #{esc.id_escenario}: {esc.origen} -> {esc.destino} "
+                    f"[servicio={esc.servicio}, proto={esc.protocolo}, puerto={esc.puerto}] "
+                    f"resultado={esc.resultado or 'pendiente'}"
+                )
+                p.drawString(50, y, texto[:110])
+                y -= 12
+                if esc.detalle:
+                    p.drawString(60, y, f"  detalle: {esc.detalle[:100]}")
+                    y -= 12
+                if y < 80:
+                    p.showPage()
+                    y = height - 50
+                    p.setFont("Helvetica", 10)
+
+        p.showPage()
+        p.save()
+
+        buffer.seek(0)
+
+        from flask import send_file
+
+        filename = f"reporte_topologia_{topologia.id_topologia}.pdf"
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/pdf",
+        )
 
     return app
 

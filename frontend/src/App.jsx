@@ -54,7 +54,9 @@ function App() {
   const [simResultados, setSimResultados] = useState([])
 
   const [nuevaPolitica, setNuevaPolitica] = useState({
+    tipo_origen: 'zona',
     origen: 'interna',
+    tipo_destino: 'zona',
     destino: 'externa',
     servicio: 'http',
     protocolo: 'tcp',
@@ -143,8 +145,8 @@ function App() {
       nodos: nodes.map((n) => ({
         id_cliente: n.id,
         nombre: n.data.label,
-        tipo: 'desconocido', // luego mapeamos tipos reales
-        zona_seguridad: 'interna', // placeholder
+        tipo: n.data.tipo || 'desconocido', // luego mapeamos tipos reales
+        zona_seguridad: n.data.zona || 'interna', // placeholder
         posicion_x: n.position.x,
         posicion_y: n.position.y,
       })),
@@ -369,6 +371,17 @@ function App() {
     }
   }
 
+  // ----- Descargar Reporte -----
+
+  const handleDescargarReporte = () => {
+    if (!selectedTopologyId) {
+      alert('Selecciona una topología primero')
+      return
+    }
+    const url = `http://127.0.0.1:5000/topologias/${selectedTopologyId}/reporte`
+    // opción simple: abrir en otra pestaña / descarga directa
+    window.open(url, '_blank')
+  }
 
 
   return (
@@ -548,6 +561,19 @@ function App() {
           <h3>Nueva política de seguridad</h3>
           <form onSubmit={handleCrearPolitica}>
             <label>
+              Tipo origen
+              <select
+                value={nuevaPolitica.tipo_origen}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('tipo_origen', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              >
+                <option value="zona">Zona</option>
+                <option value="nodo">Nodo</option>
+              </select>
+            </label>
+            <label>
               Origen (zona/nodo)
               <input
                 type="text"
@@ -557,6 +583,19 @@ function App() {
                 }
                 style={{ width: '100%', marginBottom: '4px' }}
               />
+            </label>
+            <label>
+              Tipo destino
+              <select
+                value={nuevaPolitica.tipo_destino}
+                onChange={(e) =>
+                  handleChangeNuevaPolitica('tipo_destino', e.target.value)
+                }
+                style={{ width: '100%', marginBottom: '4px' }}
+              >
+                <option value="zona">Zona</option>
+                <option value="nodo">Nodo</option>
+              </select>
             </label>
             <label>
               Destino (zona/nodo)
@@ -638,8 +677,9 @@ function App() {
               <ul>
                 {politicas.map((p) => (
                   <li key={p.id_politica}>
-                    #{p.id_politica} {p.origen} → {p.destino} [{p.servicio}] -{' '}
-                    {p.accion}
+                    #{p.id_politica}{' '} 
+                    {p.tipo_origen} {p.origen} → {p.tipo_destino} {p.destino}{' '} 
+                    [{p.servicio}] - {p.accion}
                   </li>
                 ))}
               </ul>
@@ -744,12 +784,12 @@ function App() {
               <p>
                 <strong>Escenarios definidos:</strong>
               </p>
-                {escenarios.map((e) => (
-                  <div key={e.id_escenario}>
-                    #{e.id_escenario} {e.origen} → {e.destino} [{e.servicio}] –{' '}
-                    {e.resultado || 'pendiente'}
-                  </div>
-                ))}
+              {escenarios.map((e) => (
+                <div key={e.id_escenario}>
+                  #{e.id_escenario} {e.origen} → {e.destino} [{e.servicio}] –{' '}
+                  {e.resultado || 'pendiente'}
+                </div>
+              ))}
             </>
           )}
 
@@ -760,6 +800,10 @@ function App() {
             Ejecutar simulación
           </button>
 
+          <button onClick={handleDescargarReporte} style={{ marginBottom: '8px' }}>
+            Descargar reporte PDF
+          </button>
+
           {simResultados.length > 0 && (
             <>
               <p>
@@ -768,12 +812,14 @@ function App() {
               <ul>
                 {simResultados.map((r) => (
                   <li key={r.id_escenario}>
-                    Escenario #{r.id_escenario}: {r.resultado} – {r.detalle}
+                    Escenario #{r.id_escenario}: {r.resultado} - {r.detalle}
                   </li>
                 ))}
               </ul>
             </>
           )}
+
+
         </div>
       </div>
     </div>
