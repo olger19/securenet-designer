@@ -1,31 +1,189 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
+// Importar iconos para los tipos de nodo
+import routerIcon from './assets/icons/router.png'
+import firewallIcon from './assets/icons/firewall.png'
+import serverIcon from './assets/icons/server.png'
+import switchIcon from './assets/icons/switch.png'
+import hostIcon from './assets/icons/host.png'
+import defaultIcon from './assets/icons/default.png'
+import gearIcon from './assets/icons/gear.png'
+import deleteIcon from './assets/icons/delete.png';
+
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
   useNodesState,
   useEdgesState,
+  addEdge,
+  Handle,
+  Position,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+
+// Nodo personalizado que muestra una imagen según el tipo
+const IconNode = ({ data }) => {
+  const iconSrc = nodeIconMap[data.tipo] || defaultIcon
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        padding: '12px 10px 10px 10px',
+        borderRadius: '16px',
+        background: '#111827',
+        border: '1px solid #374151',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.45)',
+        color: '#f9fafb',
+        minWidth: 140,
+        textAlign: 'center',
+        fontSize: '11px',
+      }}
+    >
+      {/* Handle de entrada */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: '#10b981',
+        }}
+      />
+
+      {/* Botón de configuración (icono de tuerca) */}
+      <button
+        onClick={data.onConfigClick}
+        title="Configurar nodo"
+        style={{
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          width: 24,
+          height: 24,
+          borderRadius: '999px',
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          padding: 0,
+        }}
+      >
+        <img
+          src={gearIcon}
+          alt="config"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+          }}
+        />
+      </button>
+      {/* Botón de eliminar nodo */}
+      {data.onDeleteClick && (
+        <button
+          onClick={data.onDeleteClick}
+          title="Eliminar nodo"
+          style={{
+            position: 'absolute',
+            top: 6,
+            left: 6,
+            width: 24,
+            height: 24,
+            borderRadius: '999px',
+            border: 'none',
+            background: 'rgba(185,28,28,0.15)', // un fondo leve para que se vea
+            cursor: 'pointer',
+            padding: 3,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <img
+            src={deleteIcon}
+            alt="delete"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+            }}
+          />
+        </button>
+      )}
+
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 6,
+          marginTop: 4,
+        }}
+      >
+        <img
+          src={iconSrc}
+          alt={data.tipo || 'nodo'}
+          style={{ width: 40, height: 40, objectFit: 'contain' }}
+        />
+        <div style={{ fontWeight: 600 }}>{data.label}</div>
+
+        {data.zona && (
+          <div style={{ fontSize: '10px', opacity: 0.8 }}>
+            Zona: {data.zona.toUpperCase()}
+          </div>
+        )}
+
+        {(data.subred || data.vlan) && (
+          <div
+            style={{
+              fontSize: '10px',
+              marginTop: 4,
+              lineHeight: 1.3,
+              opacity: 0.95,
+            }}
+          >
+            {data.subred && <div>Subred: {data.subred}</div>}
+            {data.vlan && <div>VLAN: {data.vlan}</div>}
+          </div>
+        )}
+      </div>
+
+      {/* Handle de salida */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: '#3b82f6',
+        }}
+      />
+    </div>
+  )
+}
+
+
 
 const initialNodes = [
   {
     id: '1',
     position: { x: 200, y: 100 },
     data: { label: 'R1 (Router - Interna)', tipo: 'router', zona: 'interna' },
-    type: 'default',
+    type: 'icon',
   },
   {
     id: '2',
     position: { x: 200, y: 250 },
     data: { label: 'FW1 (Firewall - DMZ)', tipo: 'firewall', zona: 'dmz' },
-    type: 'default',
+    type: 'icon',
   },
   {
     id: '3',
     position: { x: 200, y: 400 },
     data: { label: 'SRV_WEB (Servidor - DMZ)', tipo: 'servidor', zona: 'dmz' },
-    type: 'default',
+    type: 'icon',
   },
 ]
 
@@ -34,14 +192,24 @@ const initialEdges = [
   { id: 'e2-3', source: '2', target: '3' },
 ]
 
+const nodeIconMap = {
+  router: routerIcon,
+  firewall: firewallIcon,
+  servidor: serverIcon,
+  switch: switchIcon,
+  host: hostIcon,
+}
+
 // React Flow por ahora sin nodos ni edges personalizados
-const nodeTypes = {}
+const nodeTypes = {
+  icon: IconNode,
+}
 const edgeTypes = {}
 
 function App() {
   // hooks recomendados por React Flow para manejar nodos y edges
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, _setEdges, onEdgesChange] = useEdgesState(initialEdges) // ReactFlow maneja edges internamente, no los modificamos directamente
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges) // ReactFlow maneja edges internamente, no los modificamos directamente
 
   const [backendStatus, setBackendStatus] = useState('Desconocido')
   const [topologias, setTopologias] = useState([])
@@ -52,6 +220,7 @@ function App() {
   const [politicas, setPoliticas] = useState([])
   const [escenarios, setEscenarios] = useState([])
   const [simResultados, setSimResultados] = useState([])
+  const [vulnSegmentacion, setVulnSegmentacion] = useState([])
 
   const [nuevaPolitica, setNuevaPolitica] = useState({
     tipo_origen: 'zona',
@@ -75,6 +244,66 @@ function App() {
     puerto: 80,
   })
 
+  const [configNodeId, setConfigNodeId] = useState(null)
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false)
+  const [configForm, setConfigForm] = useState({
+    subred: '',
+    vlan: '',
+  })
+
+  const [deleteNodeId, setDeleteNodeId] = useState(null)
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+
+  const [isDeleteTopologyModalOpen, setIsDeleteTopologyModalOpen] = useState(false)
+
+
+  const abrirModalParaNodo = (nodeId) => {
+    const nodo = nodes.find((n) => n.id === nodeId)
+    if (!nodo) return
+
+    setConfigNodeId(nodeId)
+    setConfigForm({
+      subred: nodo.data.subred || '',
+      vlan: nodo.data.vlan || '',
+    })
+    setIsConfigModalOpen(true)
+  }
+
+  const handleConfigInputChange = (e) => {
+    const { name, value } = e.target
+    setConfigForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }))
+  }
+
+  const handleGuardarConfigNodo = () => {
+    if (!configNodeId) return
+
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === configNodeId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                subred: configForm.subred,
+                vlan: configForm.vlan,
+              },
+            }
+          : n,
+      ),
+    )
+
+    setIsConfigModalOpen(false)
+    setConfigNodeId(null)
+  }
+
+  const handleCerrarConfigNodo = () => {
+    setIsConfigModalOpen(false)
+    setConfigNodeId(null)
+  }
+
   // Probar conexión con backend 
   useEffect(() => {
     fetch('http://127.0.0.1:5000/health')
@@ -86,6 +315,54 @@ function App() {
         setBackendStatus('Error al conectar con backend')
       })
   }, [])
+  // Crear aristas nuevas
+  const onConnect = useCallback(
+    (params) => {
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            type: 'default', // puedes cambiar el tipo si luego usas edgeTypes personalizados
+          },
+          eds,
+        ),
+      )
+    },
+    [setEdges],
+  )
+
+  const handleEliminarNodo = useCallback(
+    (nodeId) => {
+      // 1) Eliminar el nodo
+      setNodes((nds) => nds.filter((n) => n.id !== nodeId))
+
+      // 2) Eliminar todos los edges relacionados
+      setEdges((eds) =>
+        eds.filter((e) => e.source !== nodeId && e.target !== nodeId),
+      )
+
+      // 3) Si estaba seleccionado, limpiar selección
+      setSelectedNodeId((prev) => (prev === nodeId ? null : prev))
+    },
+    [setNodes, setEdges],
+  )
+
+  const handleOpenDeleteModal = (nodeId) => {
+    setDeleteNodeId(nodeId)
+    setIsDeleteModalOpen(true)
+  }
+
+  const handleCancelarEliminarNodo = () => {
+    setIsDeleteModalOpen(false)
+    setDeleteNodeId(null)
+  }
+
+  const handleConfirmEliminarNodo = () => {
+    if (!deleteNodeId) return
+    handleEliminarNodo(deleteNodeId)
+    setIsDeleteModalOpen(false)
+    setDeleteNodeId(null)
+  }
 
   const cargarTopologias = async () => {
     try {
@@ -97,6 +374,53 @@ function App() {
       alert('Error al cargar topologías')
     }
   }
+
+  const handleOpenDeleteTopologyModal = () => {
+  if (!selectedTopologyId) {
+    alert('Primero selecciona una topología en la lista.')
+    return
+  }
+  setIsDeleteTopologyModalOpen(true)
+}
+
+const handleCancelarEliminarTopologia = () => {
+  setIsDeleteTopologyModalOpen(false)
+}
+
+const handleConfirmEliminarTopologia = async () => {
+  if (!selectedTopologyId) return
+
+  const id = selectedTopologyId
+
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/topologias/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!res.ok) {
+      throw new Error('Error al eliminar la topología en el servidor')
+    }
+
+    // Recargar lista de topologías
+    await cargarTopologias()
+
+    // Limpiar selección y editor
+    setSelectedTopologyId(null)
+    setNodes([])
+    setEdges([])
+    setPoliticas([])
+    setEscenarios([])
+    setSimResultados([])
+    setVulnSegmentacion([])
+
+    alert('Topología eliminada correctamente')
+  } catch (err) {
+    console.error(err)
+    alert('Ocurrió un error al eliminar la topología')
+  } finally {
+    setIsDeleteTopologyModalOpen(false)
+  }
+}
 
   useEffect(() => {
     cargarTopologias()
@@ -112,6 +436,42 @@ function App() {
     } catch (err) {
       console.error(err)
       setPoliticas([])
+    }
+  }
+
+  const cargarTopologiaEnEditor = async (idTopologia) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:5000/topologias/${idTopologia}`)
+      const data = await res.json()
+
+      const nuevosNodos = (data.nodos || []).map((n) => ({
+        id: String(n.id_nodo),
+        position: {
+          x: n.posicion_x ?? 0,
+          y: n.posicion_y ?? 0,
+        },
+        data: {
+          label: n.nombre,
+          tipo: n.tipo,
+          zona: n.zona_seguridad,
+          subred: n.subred || '',
+          vlan: n.vlan ?? '',
+        },
+        type: 'icon',
+      }))
+
+      const nuevosEdges = (data.enlaces || []).map((e) => ({
+        id: `e-${e.id_enlace}`,
+        source: String(e.id_nodo_origen),
+        target: String(e.id_nodo_destino),
+      }))
+
+      setNodes(nuevosNodos)
+      setEdges(nuevosEdges)
+      setSelectedNodeId(null)
+    } catch (err) {
+      console.error(err)
+      alert('Error al cargar la topología en el editor')
     }
   }
 
@@ -149,6 +509,8 @@ function App() {
         zona_seguridad: n.data.zona || 'interna', // placeholder
         posicion_x: n.position.x,
         posicion_y: n.position.y,
+        subred: n.data.subred || null,
+        vlan: n.data.vlan === '' ? null : n.data.vlan ?? null,
       })),
       enlaces: edges.map((e) => ({
         id_cliente: e.id,
@@ -170,6 +532,8 @@ function App() {
       alert(`Topología guardada con ID ${data.id_topologia}`)
       await cargarTopologias()
       setSelectedTopologyId(data.id_topologia)
+      setSelectedTopologyId(data.id_topologia)
+      await cargarTopologiaEnEditor(data.id_topologia)
     } catch (err) {
       console.error(err)
       alert('Error al guardar topología')
@@ -178,6 +542,7 @@ function App() {
 
   const handleSeleccionarTopologia = (idTopologia) => {
     setSelectedTopologyId(idTopologia)
+    cargarTopologiaEnEditor(idTopologia)
   }
 
   // ----- Editor: anadir nodos ----
@@ -209,7 +574,7 @@ function App() {
         tipo,
         zona,
       },
-      type: 'default',
+      type: 'icon',
     }
 
     setNodes((nds) => [...nds, newNode])
@@ -371,6 +736,27 @@ function App() {
     }
   }
 
+  // -----------ANALIZAR SEGMENTACION-------------
+
+  const handleAnalizarSegmentacion = async () => {
+    if (!selectedTopologyId) {
+      alert('Selecciona una topología primero')
+      return
+    }
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${selectedTopologyId}/vulnerabilidades_segmentacion`,
+      )
+      const data = await res.json()
+      setVulnSegmentacion(data)
+    } catch (err) {
+      console.error(err)
+      alert('Error al analizar segmentación')
+    }
+  }
+
+
   // ----- Descargar Reporte -----
 
   const handleDescargarReporte = () => {
@@ -382,6 +768,23 @@ function App() {
     // opción simple: abrir en otra pestaña / descarga directa
     window.open(url, '_blank')
   }
+
+  const nodesWithHandlers = nodes.map((n) => ({
+    ...n,
+    data: {
+      ...n.data,
+      onConfigClick: () => abrirModalParaNodo(n.id),
+      onDeleteClick: () => handleOpenDeleteModal(n.id),
+    },
+  }))
+
+  // Obtener la topología seleccionada para mostrar su nombre en el modal
+  const selectedTopologyObj = topologias.find(
+    (t) => t.id_topologia === selectedTopologyId
+  )
+
+  const selectedTopologyName =
+    selectedTopologyObj?.nombre || (selectedTopologyId ? `ID ${selectedTopologyId}` : '')
 
 
   return (
@@ -411,6 +814,9 @@ function App() {
 
         <button onClick={cargarTopologias} style={{ display: 'block', marginBottom: '8px' }}>
           Recargar lista
+        </button>
+        <button onClick={handleOpenDeleteTopologyModal} style={{ display: 'block', marginBottom: '8px', background: '#b91c1c', color: '#fff', }}>
+          Eliminar topología seleccionada
         </button>
 
         {/* Panel de propiedades del nodo seleccionado */}
@@ -471,11 +877,12 @@ function App() {
 
           {/* Lienzo React Flow */}
           <ReactFlow
-            nodes={nodes}
+            nodes={nodesWithHandlers}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
+            onConnect={onConnect}
             fitView
             nodeTypes={nodeTypes}   // añadido
             edgeTypes={edgeTypes}   // añadido
@@ -484,7 +891,23 @@ function App() {
 
             <Background />
             <Controls />
-            <MiniMap />
+            <MiniMap
+              style={{
+                width: 180,
+                height: 140,
+                background: '#020617',
+                borderRadius: 8,
+              }}
+              nodeColor={(node) => {
+                const zona = node.data?.zona
+                if (zona === 'interna') return '#22c55e'   // verde
+                if (zona === 'dmz') return '#eab308'       // amarillo
+                if (zona === 'externa') return '#ef4444'   // rojo
+                return '#64748b'                           // gris por defecto
+              }}
+              nodeStrokeColor="#0f172a"
+              nodeBorderRadius={3}
+            />
           </ReactFlow>
         </div>
         {/* Panel derecho: propiedades del nodo */}
@@ -819,9 +1242,277 @@ function App() {
             </>
           )}
 
+                    <hr style={{ borderColor: '#444' }} />
+
+          <h3>Análisis de segmentación (VLAN/Subred)</h3>
+          <button
+            onClick={handleAnalizarSegmentacion}
+            style={{ marginBottom: '8px' }}
+          >
+            Analizar VLAN/Subred
+          </button>
+
+          {vulnSegmentacion.length > 0 ? (
+            <>
+              <p>
+                <strong>Vulnerabilidades detectadas:</strong>
+              </p>
+              <ul>
+                {vulnSegmentacion.map((v, idx) => (
+                  <li key={idx}>
+                    [{v.nivel?.toUpperCase() || 'INFO'}] {v.mensaje}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p style={{ fontSize: '12px', opacity: 0.8 }}>
+              Aún no se ha ejecutado el análisis o no se detectaron problemas.
+            </p>
+          )}
 
         </div>
       </div>
+
+    {/* Modal de configuración de nodo */}
+      {isConfigModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: '#111827',
+              padding: '20px',
+              borderRadius: '10px',
+              width: '320px',
+              color: '#f9fafb',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
+            }}
+          >
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>
+              Configuración de nodo
+            </h3>
+
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ display: 'block', marginBottom: '4px' }}>
+                Subred (CIDR)
+              </label>
+              <input
+                type="text"
+                name="subred"
+                value={configForm.subred}
+                onChange={handleConfigInputChange}
+                placeholder="Ej: 192.168.10.0/24"
+                style={{ width: '100%', padding: '6px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '4px' }}>
+                VLAN
+              </label>
+              <input
+                type="number"
+                name="vlan"
+                value={configForm.vlan}
+                onChange={handleConfigInputChange}
+                placeholder="Ej: 10"
+                style={{ width: '100%', padding: '6px' }}
+              />
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+              }}
+            >
+              <button
+                onClick={handleCerrarConfigNodo}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #4b5563',
+                  background: 'transparent',
+                  color: '#e5e7eb',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={handleGuardarConfigNodo}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: '#2563eb',
+                  color: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    {/* Modal de eliminación de nodo */}
+    {isDeleteModalOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}
+      >
+        <div
+          style={{
+            background: '#111827',
+            padding: '20px',
+            borderRadius: '10px',
+            width: '320px',
+            color: '#f9fafb',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
+            Eliminar nodo
+          </h3>
+
+          <p style={{ fontSize: '13px', marginBottom: '16px' }}>
+            ¿Desea eliminar este nodo? Esta acción no se puede deshacer.
+          </p>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
+            }}
+          >
+            <button
+              onClick={handleCancelarEliminarNodo}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #4b5563',
+                background: 'transparent',
+                color: '#e5e7eb',
+                cursor: 'pointer',
+              }}
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={handleConfirmEliminarNodo}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#b91c1c',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Modal de eliminación de topología */}
+    {isDeleteTopologyModalOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1200,
+        }}
+      >
+        <div
+          style={{
+            background: '#111827',
+            padding: '20px',
+            borderRadius: '10px',
+            width: '340px',
+            color: '#f9fafb',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
+            Eliminar topología
+          </h3>
+
+          <p style={{ fontSize: '13px', marginBottom: '16px' }}>
+            ¿Desea eliminar la topología {' '}
+            <span style={{ fontWeight: 'bold', color: '#fca5a5' }}>
+              {selectedTopologyName}
+            </span>
+            ?
+            Esta acción eliminará también sus nodos, enlaces, políticas y escenarios
+            y no se puede deshacer.
+          </p>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
+            }}
+          >
+            <button
+              onClick={handleCancelarEliminarTopologia}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #4b5563',
+                background: 'transparent',
+                color: '#e5e7eb',
+                cursor: 'pointer',
+              }}
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={handleConfirmEliminarTopologia}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#b91c1c',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     </div>
   )
 }
