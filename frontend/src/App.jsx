@@ -221,8 +221,6 @@ function App() {
   const [escenarios, setEscenarios] = useState([])
   const [simResultados, setSimResultados] = useState([])
   const [vulnSegmentacion, setVulnSegmentacion] = useState([])
-  const [selectedFirewallId, setSelectedFirewallId] = useState(null)
-
 
   const [nuevaPolitica, setNuevaPolitica] = useState({
     tipo_origen: 'zona',
@@ -258,6 +256,9 @@ function App() {
 
   const [isDeleteTopologyModalOpen, setIsDeleteTopologyModalOpen] = useState(false)
 
+  // Modal de confirmación al guardar topología
+  const [isSaveTopologyModalOpen, setIsSaveTopologyModalOpen] = useState(false)
+  const [lastSavedTopologyId, setLastSavedTopologyId] = useState(null)
 
   const abrirModalParaNodo = (nodeId) => {
     const nodo = nodes.find((n) => n.id === nodeId)
@@ -286,13 +287,13 @@ function App() {
       nds.map((n) =>
         n.id === configNodeId
           ? {
-            ...n,
-            data: {
-              ...n.data,
-              subred: configForm.subred,
-              vlan: configForm.vlan,
-            },
-          }
+              ...n,
+              data: {
+                ...n.data,
+                subred: configForm.subred,
+                vlan: configForm.vlan,
+              },
+            }
           : n,
       ),
     )
@@ -329,6 +330,17 @@ function App() {
           eds,
         ),
       )
+    },
+    [setEdges],
+  )
+
+  // Eliminar aristas con doble click
+  const onEdgeDoubleClick = useCallback(
+    (event, edge) => {
+      // Evita que el doble click haga zoom raro
+      event.stopPropagation()
+      // Eliminamos sólo el edge que se doble–clicó
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id))
     },
     [setEdges],
   )
@@ -378,64 +390,61 @@ function App() {
   }
 
   const handleOpenDeleteTopologyModal = () => {
-    if (!selectedTopologyId) {
-      alert('Primero selecciona una topología en la lista.')
-      return
-    }
-    setIsDeleteTopologyModalOpen(true)
+  if (!selectedTopologyId) {
+    alert('Primero selecciona una topología en la lista.')
+    return
   }
+  setIsDeleteTopologyModalOpen(true)
+}
 
-  const handleCancelarEliminarTopologia = () => {
+const handleCancelarEliminarTopologia = () => {
+  setIsDeleteTopologyModalOpen(false)
+}
+
+const handleConfirmEliminarTopologia = async () => {
+  if (!selectedTopologyId) return
+
+  const id = selectedTopologyId
+
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/topologias/${id}`, {
+      method: 'DELETE',
+    })
+
+    if (!res.ok) {
+      throw new Error('Error al eliminar la topología en el servidor')
+    }
+
+    // Recargar lista de topologías
+    await cargarTopologias()
+
+    // Limpiar selección y editor
+    setSelectedTopologyId(null)
+    setNodes([])
+    setEdges([])
+    setPoliticas([])
+    setEscenarios([])
+    setSimResultados([])
+    setVulnSegmentacion([])
+
+    alert('Topología eliminada correctamente')
+  } catch (err) {
+    console.error(err)
+    alert('Ocurrió un error al eliminar la topología')
+  } finally {
     setIsDeleteTopologyModalOpen(false)
   }
-
-  const handleConfirmEliminarTopologia = async () => {
-    if (!selectedTopologyId) return
-
-    const id = selectedTopologyId
-
-    try {
-      const res = await fetch(`http://127.0.0.1:5000/topologias/${id}`, {
-        method: 'DELETE',
-      })
-
-      if (!res.ok) {
-        throw new Error('Error al eliminar la topología en el servidor')
-      }
-
-      // Recargar lista de topologías
-      await cargarTopologias()
-
-      // Limpiar selección y editor
-      setSelectedTopologyId(null)
-      setNodes([])
-      setEdges([])
-      setPoliticas([])
-      setEscenarios([])
-      setSimResultados([])
-      setVulnSegmentacion([])
-
-      alert('Topología eliminada correctamente')
-    } catch (err) {
-      console.error(err)
-      alert('Ocurrió un error al eliminar la topología')
-    } finally {
-      setIsDeleteTopologyModalOpen(false)
-    }
-  }
+}
 
   useEffect(() => {
     cargarTopologias()
   }, [])
 
-  const cargarPoliticas = async (idTopologia, firewallId = null) => {
+  const cargarPoliticas = async (idTopologia) => {
     try {
-      let url = `http://127.0.0.1:5000/topologias/${idTopologia}/politicas`
-      if (firewallId) {
-        url += `?firewall=${firewallId}`
-      }
-
-      const res = await fetch(url)
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${idTopologia}/politicas`,
+      )
       const data = await res.json()
       setPoliticas(data)
     } catch (err) {
@@ -493,23 +502,13 @@ function App() {
     }
   }
 
-  // Cuando cambia la topología seleccionada
   useEffect(() => {
     if (selectedTopologyId) {
+      cargarPoliticas(selectedTopologyId)
       cargarEscenarios(selectedTopologyId)
       setSimResultados([])
-      setPoliticas([])
     }
   }, [selectedTopologyId])
-
-  // Cuando cambias de firewall dentro de una topología
-  useEffect(() => {
-    if (selectedTopologyId && selectedFirewallId) {
-      cargarPoliticas(selectedTopologyId, selectedFirewallId)
-    } else {
-      setPoliticas([])
-    }
-  }, [selectedTopologyId, selectedFirewallId])
 
   // Crear una topología de prueba en el backend
   const handleGuardarTopologia = async () => {
@@ -536,23 +535,29 @@ function App() {
     }
 
     try {
-      const res = await fetch('http://127.0.0.1:5000/topologias', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json()
-      alert(`Topología guardada con ID ${data.id_topologia}`)
-      await cargarTopologias()
-      setSelectedTopologyId(data.id_topologia)
-      setSelectedTopologyId(data.id_topologia)
-      await cargarTopologiaEnEditor(data.id_topologia)
-    } catch (err) {
-      console.error(err)
-      alert('Error al guardar topología')
-    }
+    const res = await fetch('http://127.0.0.1:5000/topologias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const data = await res.json()
+
+    // Guardar el ID para mostrarlo en el modal
+    setLastSavedTopologyId(data.id_topologia)
+
+    // Abrir el modal personalizado
+    setIsSaveTopologyModalOpen(true)
+
+    // Recargar lista de topologías
+    await cargarTopologias()
+    setSelectedTopologyId(data.id_topologia)
+    await cargarTopologiaEnEditor(data.id_topologia)
+
+  } catch (err) {
+    console.error(err)
+    alert('Error al guardar topología')
+  }
   }
 
   const handleSeleccionarTopologia = (idTopologia) => {
@@ -598,14 +603,6 @@ function App() {
   // ---------- SELECCION Y PROPIEDADES DEL NODO ----------
   const onNodeClick = (_, node) => {
     setSelectedNodeId(node.id)
-
-    if (node.data?.tipo === 'firewall') {
-      // OJO: cuando la topología se carga desde el backend,
-      // el id del nodo es el id_nodo de la BD (numérico pero como string)
-      setSelectedFirewallId(Number(node.id))
-    } else {
-      setSelectedFirewallId(null)
-    }
   }
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
@@ -666,11 +663,6 @@ function App() {
     e.preventDefault()
     if (!selectedTopologyId) {
       alert('Selecciona una topología primero')
-      return
-    }
-
-    if (!selectedFirewallId) {
-      alert('Selecciona un firewall en la topología para poder crear sus políticas')
       return
     }
 
@@ -911,6 +903,7 @@ function App() {
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
             onConnect={onConnect}
+            onEdgeDoubleClick={onEdgeDoubleClick}
             fitView
             nodeTypes={nodeTypes}   // añadido
             edgeTypes={edgeTypes}   // añadido
@@ -1009,17 +1002,7 @@ function App() {
 
           <hr style={{ borderColor: '#444' }} />
 
-          <h3>Políticas del firewall</h3>
-          {selectedFirewallId ? (
-            <p style={{ fontSize: '12px', opacity: 0.8 }}>
-              Configurando políticas del firewall con ID {selectedFirewallId}.
-              Estas reglas se aplicarán durante la simulación de flujos.
-            </p>
-          ) : (
-            <p style={{ fontSize: '12px', opacity: 0.8 }}>
-              Selecciona un nodo de tipo <strong>firewall</strong> en el diagrama para ver y configurar sus políticas.
-            </p>
-          )}
+          <h3>Nueva política de seguridad</h3>
           <form onSubmit={handleCrearPolitica}>
             <label>
               Tipo origen
@@ -1133,19 +1116,19 @@ function App() {
           {politicas.length > 0 && (
             <>
               <p>
-                <strong>Políticas del firewall:</strong>
+                <strong>Políticas definidas:</strong>
               </p>
               <ul>
-                {politicas.map((p) => (
+                {politicas.map((p, index) => (
                   <li key={p.id_politica}>
-                    #{p.id_politica}{' '}
-                    {p.tipo_origen} {p.origen} → {p.tipo_destino} {p.destino}{' '}
-                    [{p.servicio}] - {p.accion}
+                    #{index + 1}{' '}
+                    {p.tipo_origen} {p.origen} → {p.tipo_destino} {p.destino} [{p.servicio}] - {p.accion}
                   </li>
                 ))}
               </ul>
             </>
           )}
+
 
           <hr style={{ borderColor: '#444' }} />
 
@@ -1257,11 +1240,6 @@ function App() {
           <hr style={{ borderColor: '#444' }} />
 
           <h3>Simulación</h3>
-
-          <p style={{ fontSize: '12px', opacity: 0.8, marginTop: 4 }}>
-            Se evalúan los escenarios de flujo contra las políticas del firewall para determinar si el tráfico es permitido o bloqueado.
-          </p>
-
           <button onClick={handleSimular} style={{ marginBottom: '8px' }}>
             Ejecutar simulación
           </button>
@@ -1285,7 +1263,7 @@ function App() {
             </>
           )}
 
-          <hr style={{ borderColor: '#444' }} />
+                    <hr style={{ borderColor: '#444' }} />
 
           <h3>Análisis de segmentación (VLAN/Subred)</h3>
           <button
@@ -1317,7 +1295,7 @@ function App() {
         </div>
       </div>
 
-      {/* Modal de configuración de nodo */}
+    {/* Modal de configuración de nodo */}
       {isConfigModalOpen && (
         <div
           style={{
@@ -1410,151 +1388,229 @@ function App() {
           </div>
         </div>
       )}
-      {/* Modal de eliminación de nodo */}
-      {isDeleteModalOpen && (
+    {/* Modal de eliminación de nodo */}
+    {isDeleteModalOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}
+      >
         <div
           style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.55)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
+            background: '#111827',
+            padding: '20px',
+            borderRadius: '10px',
+            width: '320px',
+            color: '#f9fafb',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
           }}
         >
+          <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
+            Eliminar nodo
+          </h3>
+
+          <p style={{ fontSize: '13px', marginBottom: '16px' }}>
+            ¿Desea eliminar este nodo? Esta acción no se puede deshacer.
+          </p>
+
           <div
             style={{
-              background: '#111827',
-              padding: '20px',
-              borderRadius: '10px',
-              width: '320px',
-              color: '#f9fafb',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
             }}
           >
-            <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
-              Eliminar nodo
-            </h3>
-
-            <p style={{ fontSize: '13px', marginBottom: '16px' }}>
-              ¿Desea eliminar este nodo? Esta acción no se puede deshacer.
-            </p>
-
-            <div
+            <button
+              onClick={handleCancelarEliminarNodo}
               style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: '8px',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #4b5563',
+                background: 'transparent',
+                color: '#e5e7eb',
+                cursor: 'pointer',
               }}
             >
-              <button
-                onClick={handleCancelarEliminarNodo}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #4b5563',
-                  background: 'transparent',
-                  color: '#e5e7eb',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
+              Cancelar
+            </button>
 
-              <button
-                onClick={handleConfirmEliminarNodo}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#b91c1c',
-                  color: '#fff',
-                  cursor: 'pointer',
-                }}
-              >
-                Eliminar
-              </button>
-            </div>
+            <button
+              onClick={handleConfirmEliminarNodo}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#b91c1c',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Eliminar
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )}
 
-      {/* Modal de eliminación de topología */}
-      {isDeleteTopologyModalOpen && (
+    {/* Modal de eliminación de topología */}
+    {isDeleteTopologyModalOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1200,
+        }}
+      >
         <div
           style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.55)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1200,
+            background: '#111827',
+            padding: '20px',
+            borderRadius: '10px',
+            width: '340px',
+            color: '#f9fafb',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
           }}
         >
+          <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
+            Eliminar topología
+          </h3>
+
+          <p style={{ fontSize: '13px', marginBottom: '16px' }}>
+            ¿Desea eliminar la topología {' '}
+            <span style={{ fontWeight: 'bold', color: '#fca5a5' }}>
+              {selectedTopologyName}
+            </span>
+            ?
+            Esta acción eliminará también sus nodos, enlaces, políticas y escenarios
+            y no se puede deshacer.
+          </p>
+
           <div
             style={{
-              background: '#111827',
-              padding: '20px',
-              borderRadius: '10px',
-              width: '340px',
-              color: '#f9fafb',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.6)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
             }}
           >
-            <h3 style={{ marginTop: 0, marginBottom: '12px', color: '#fecaca' }}>
-              Eliminar topología
-            </h3>
-
-            <p style={{ fontSize: '13px', marginBottom: '16px' }}>
-              ¿Desea eliminar la topología {' '}
-              <span style={{ fontWeight: 'bold', color: '#fca5a5' }}>
-                {selectedTopologyName}
-              </span>
-              ?
-              Esta acción eliminará también sus nodos, enlaces, políticas y escenarios
-              y no se puede deshacer.
-            </p>
-
-            <div
+            <button
+              onClick={handleCancelarEliminarTopologia}
               style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: '8px',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: '1px solid #4b5563',
+                background: 'transparent',
+                color: '#e5e7eb',
+                cursor: 'pointer',
               }}
             >
-              <button
-                onClick={handleCancelarEliminarTopologia}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: '1px solid #4b5563',
-                  background: 'transparent',
-                  color: '#e5e7eb',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
+              Cancelar
+            </button>
 
-              <button
-                onClick={handleConfirmEliminarTopologia}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#b91c1c',
-                  color: '#fff',
-                  cursor: 'pointer',
-                }}
-              >
-                Eliminar
-              </button>
-            </div>
+            <button
+              onClick={handleConfirmEliminarTopologia}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#b91c1c',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Eliminar
+            </button>
           </div>
         </div>
-      )}
+      </div>
+    )}
+
+    {isSaveTopologyModalOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          background: 'rgba(0,0,0,0.65)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+        }}
+      >
+        <div
+          style={{
+            background: '#1f2937',
+            padding: '20px',
+            borderRadius: '8px',
+            width: '360px',
+            color: '#fff',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            textAlign: 'center',
+          }}
+        >
+          <h2 style={{ marginBottom: '12px' }}>Topología guardada</h2>
+
+          <p style={{ marginBottom: '16px' }}>
+            La topología fue guardada exitosamente con ID:<br />
+            <strong style={{ fontSize: '18px' }}>#{lastSavedTopologyId}</strong>
+          </p>
+
+          <button
+            onClick={() => setIsSaveTopologyModalOpen(false)}
+            style={{
+              width: '100%',
+              padding: '8px',
+              marginBottom: '10px',
+              background: '#2563eb',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
+          >
+            Continuar con esta topología
+          </button>
+
+          <button
+            onClick={() => {
+              setNodes([])
+              setEdges([])
+              setSelectedNodeId(null)
+              setPoliticas([])
+              setEscenarios([])
+              setSimResultados([])
+              setVulnSegmentacion([])
+              setSelectedTopologyId(null)
+              setIsSaveTopologyModalOpen(false)
+            }}
+            style={{
+              width: '100%',
+              padding: '8px',
+              background: '#dc2626',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
+          >
+            Crear nuevo lienzo
+          </button>
+        </div>
+      </div>
+    )}
+
 
     </div>
   )
