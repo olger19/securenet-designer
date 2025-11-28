@@ -40,6 +40,13 @@ class Nodo(db.Model):
     subred = db.Column(db.String(50), nullable=True)
     vlan = db.Column(db.Integer, nullable=True)
 
+    politicas = db.relationship(
+        "PoliticaSeguridad",
+        backref="firewall",
+        lazy=True,
+        cascade="all, delete-orphan"
+    )
+
 
 class Enlace(db.Model):
     __tablename__ = "enlace"
@@ -55,6 +62,8 @@ class PoliticaSeguridad(db.Model):
 
     id_politica = db.Column(db.Integer, primary_key=True, autoincrement=True)
     id_topologia = db.Column(db.Integer, db.ForeignKey("topologia.id_topologia"), nullable=False)
+    # Soportar varios firewalls
+    id_firewall = db.Column(db.Integer, db.ForeignKey("nodo.id_nodo"), nullable=True)
 
     # zona o nodo
     tipo_origen = db.Column(db.String(20), nullable=False, default="zona")
@@ -249,12 +258,21 @@ def create_app():
 
     @app.get("/topologias/<int:id_topologia>/politicas")
     def listar_politicas(id_topologia):
-        politicas = PoliticaSeguridad.query.filter_by(id_topologia=id_topologia).all()
+        
+        id_firewall = request.args.get("id_firewall", type=int)
+        query = PoliticaSeguridad.query.filter_by(id_topologia=id_topologia)
+
+        if id_firewall is not None:
+            query = query.filter_by(id_firewall=id_firewall)
+
+        politicas = query.all()
+
         resultado = []
         for p in politicas:
             resultado.append(
                 {
                     "id_politica": p.id_politica,
+                    "id_firewall": p.id_firewall,
                     "tipo_origen": p.tipo_origen,
                     "origen": p.origen,
                     "tipo_destino": p.tipo_destino,
@@ -272,8 +290,11 @@ def create_app():
     def crear_politica(id_topologia):
         data = request.get_json()
 
+        id_firewall = data.get("id_firewall")  # viene del frontend
+
         politica = PoliticaSeguridad(
             id_topologia=id_topologia,
+            id_firewall=id_firewall,  # 🔹 la ligamos al firewall
             tipo_origen=data.get("tipo_origen", "zona"),
             origen=data.get("origen"),
             tipo_destino=data.get("tipo_destino", "zona"),
@@ -353,9 +374,23 @@ def create_app():
 
     @app.post("/topologias/<int:id_topologia>/simular")
     def simular_flujo(id_topologia):
+
+        """
+        Simula el comportamiento del firewall de la topología:
+        - PoliticaSeguridad representa las reglas del firewall (ACLs).
+        - EscenarioFlujo representa los posibles flujos de tráfico.
+        - Para cada flujo se determina si es permitido o bloqueado según las reglas.
+        """
         politicas = PoliticaSeguridad.query.filter_by(id_topologia=id_topologia).all()
         escenarios = EscenarioFlujo.query.filter_by(id_topologia=id_topologia).all()
         nodos = Nodo.query.filter_by(id_topologia=id_topologia).all()
+
+        # Mapear de firewall por su id, para mostrar su nombre en los detalles
+        firewalls_por_id = {
+            n.id_nodo: n
+            for n in nodos
+            if (n.tipo or "").lower() == "firewall"
+        }
 
         resultados = []
 
@@ -406,17 +441,20 @@ def create_app():
                     mejor_politica = pol
 
             if mejor_politica:
+                fw = firewalls_por_id.get(mejor_politica.id_firewall)
+                fw_label = f" en el firewall {fw.nombre}" if fw else " en el firewall lógico de la topología"
+
                 if mejor_politica.accion.lower() == "denegar":
                     esc.resultado = "bloqueado"
                     esc.detalle = (
-                        f"Bloqueado por política #{mejor_politica.id_politica} "
+                        f"Bloqueado por política #{mejor_politica.id_politica}{fw_label} "
                         f"({mejor_politica.tipo_origen} {mejor_politica.origen} -> "
                         f"{mejor_politica.tipo_destino} {mejor_politica.destino})"
                     )
                 else:
                     esc.resultado = "permitido"
                     esc.detalle = (
-                        f"Permitido por política #{mejor_politica.id_politica} "
+                        f"Permitido por política #{mejor_politica.id_politica}{fw_label} "
                         f"({mejor_politica.tipo_origen} {mejor_politica.origen} -> "
                         f"{mejor_politica.tipo_destino} {mejor_politica.destino})"
                     )
@@ -629,9 +667,22 @@ def create_app():
 
         y -= 10
 
-        # Políticas
+        # Politicas (asociadas al firewall si existe)
+        # Buscar un nodo de tipo firewall en la topologia
+        firewall_nodo = next(
+            (n for n in nodos if (n.tipo or "").lower() == "firewall"),
+            None
+        )
+
         p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "Políticas de seguridad:")
+        if firewall_nodo:
+            p.drawString(
+                50,
+                y,
+                f"Políticas aplicadas por el firewall {firewall_nodo.nombre}:"
+            )
+        else:
+            p.drawString(50, y, "Políticas de seguridad de la topología:")
         y -= 18
         p.setFont("Helvetica", 10)
         if not politicas:
