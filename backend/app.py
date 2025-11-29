@@ -294,7 +294,7 @@ def create_app():
 
         politica = PoliticaSeguridad(
             id_topologia=id_topologia,
-            id_firewall=id_firewall,  # 🔹 la ligamos al firewall
+            id_firewall=id_firewall,  # la ligamos al firewall
             tipo_origen=data.get("tipo_origen", "zona"),
             origen=data.get("origen"),
             tipo_destino=data.get("tipo_destino", "zona"),
