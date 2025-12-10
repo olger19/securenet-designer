@@ -10,6 +10,15 @@ from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 import os
 
+# gns3
+import requests
+import time
+import re
+
+# Config GNS3 
+GNS3_SERVER_URL = os.environ.get("GNS3_SERVER_URL", "http://localhost:3080")
+GNS3_COMPUTE_ID = os.environ.get("GNS3_COMPUTE_ID", "vm")  # normalmente "local" en GNS3
+
 db = SQLAlchemy()
 
 # MODELOS
@@ -110,6 +119,110 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+
+
+    def docker_safe_name(name: str) -> str:
+        """
+        Devuelve un nombre válido para GNS3/Docker:
+        - Solo [a-zA-Z0-9_.-]
+        - Sustituye espacios y caracteres raros por '_'
+        - Asegura que el primer carácter sea alfanumérico
+        """
+        if not name:
+            return "node"
+
+        # Reemplazar espacios por guiones bajos
+        name = name.replace(" ", "_")
+
+        # Reemplazar cualquier cosa que no sea [a-zA-Z0-9_.-] por '_'
+        name = re.sub(r"[^a-zA-Z0-9_.-]", "_", name)
+
+        # Asegurar que empiece por letra o número
+        if not re.match(r"[a-zA-Z0-9]", name[0]):
+            name = f"n_{name}"
+
+        return name
+
+    # --------- HELPERS GNS3 ---------
+
+    def _gns3_post(path, payload):
+        """
+        Helper simple para hacer POST a la API de GNS3.
+        Lanza RuntimeError si algo sale mal.
+        """
+        url = f"{GNS3_SERVER_URL}{path}"
+        try:
+            resp = requests.post(url, json=payload)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            # Incluimos el texto de respuesta si existe para depurar
+            text = ""
+            if e.response is not None:
+                try:
+                    text = e.response.text
+                except Exception:
+                    text = ""
+            raise RuntimeError(f"Error llamando a GNS3 API {url}: {e} {text}")
+
+        # Si GNS3 responde 201/200 con JSON
+        if resp.content:
+            return resp.json()
+        return {}
+
+    def _mapear_nodo_a_gns3(nodo):
+        """
+        Dado un Nodo de tu BD, devuelve:
+        (node_type, properties) para GNS3.
+
+        Aquí sólo definimos una primera versión simple.
+        Luego puedes afinarla (usar plantillas, imágenes concretas, etc.).
+        """
+        tipo = (nodo.tipo or "").lower()
+        nombre_original = nodo.nombre or f"nodo_{nodo.id_nodo or ''}"
+
+        # Nombre seguro para GNS3/Docker
+        nombre_seguro = docker_safe_name(nombre_original)
+
+        # Router de tu editor -> VPCS con varios adapters
+        if tipo == "router":
+            return {
+                "node_type": "vpcs",
+                "name": nombre_seguro, # Saneado
+                "properties": {}
+            }
+
+        # Firewall -> contenedor Docker
+        if tipo == "firewall":
+            return {
+                "node_type": "docker",
+                "name": nombre_seguro,
+                "properties": {
+                    "image": "alpine",
+                    "adapters": 4,
+                },
+            }
+
+        # Servidor -> otro contenedor Docker
+        if tipo == "servidor":
+            return {
+                "node_type": "docker",
+                "name": nombre_seguro,
+                    "properties": {
+                    "image": "alpine",
+                    "adapters": 2,
+                },
+            }
+
+        # Cualquier otro tipo: por defecto lo trato como VPCS
+        # Por defecto, cualquier otra cosa -> VPCS
+        return {
+            "node_type": "vpcs",
+            "name": nombre_seguro,
+                "properties": {
+                "adapters": 2,
+            },
+        }
+
 
     # ---------- ENDPOINTS ----------
 
@@ -846,7 +959,6 @@ def create_app():
 
         return jsonify({"mensaje": "Topología eliminada correctamente"}), 200
 
-
     def dibujar_topologia_canvas(p, nodos, enlaces, x, y, width, height):
         """
         Dibuja un esquema de la topología usando las posiciones
@@ -985,6 +1097,122 @@ def create_app():
             p.drawCentredString(cx, y_subred, subred_txt[:26])
             p.drawCentredString(cx, y_vlan, vlan_txt[:26])
 
+    # --------- EXPORTAR TOPOLÓGIA A GNS3 ---------
+
+    @app.post("/topologias/<int:id_topologia>/exportar_gns3")
+    def exportar_topologia_a_gns3(id_topologia):
+        """
+        Toma la topología de la BD (nodos + enlaces) y la replica en GNS3:
+        - Crea un proyecto en GNS3
+        - Crea un nodo GNS3 por cada Nodo
+        - Crea un enlace GNS3 por cada Enlace
+        Devuelve el project_id de GNS3.
+        """
+        topologia = Topologia.query.get_or_404(id_topologia)
+        nodos = Nodo.query.filter_by(id_topologia=id_topologia).all()
+        enlaces = Enlace.query.filter_by(id_topologia=id_topologia).all()
+
+        if not nodos:
+            return jsonify({"error": "La topología no tiene nodos para exportar"}), 400
+
+        # 1) Crear proyecto en GNS3
+        base_name = f"SecureNet_{topologia.id_topologia}_{topologia.nombre}"
+        # añadimos un sufijo con timestamp para evitar 409 (conflict)
+        nombre_proyecto = f"{base_name}_{int(time.time())}"
+
+        proyecto_payload = {
+            "name": nombre_proyecto[:64]  # GNS3 suele limitar longitud
+        }
+
+        try:
+            proyecto = _gns3_post("/v2/projects", proyecto_payload)
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 502
+
+        # Obtener project_id de la respuesta
+        project_id = proyecto.get("project_id")
+        if not project_id:
+            return jsonify({"error": "La respuesta de GNS3 no contiene project_id"}), 502
+
+        # 2) Crear nodos en GNS3 y mapear id_nodo BD -> node_id GNS3
+        bd_to_gns3_node_id = {}
+        # Contador de puertos por nodo GNS3 (para conectar enlaces)
+        port_counters = {}
+
+        for n in nodos:
+            mapping = _mapear_nodo_a_gns3(n)
+
+            # Coordenadas: usamos las mismas que tienes en React Flow,
+            # pero GNS3 tiene origen distinto. Para empezar esto suele funcionar;
+            # si quedan “boca abajo” puedes invertir Y.
+            node_payload = {
+                "name": mapping["name"],
+                "node_type": mapping["node_type"],
+                "compute_id": GNS3_COMPUTE_ID,
+                "x": int(n.posicion_x),
+                "y": int(-n.posicion_y),
+                "properties": mapping.get("properties", {}),
+            }
+
+            # Docker necesita console_type explícito
+            if mapping["node_type"] == "docker":
+                node_payload["properties"].setdefault("console_type", "telnet")
+
+            try:
+                node_resp = _gns3_post(f"/v2/projects/{project_id}/nodes", node_payload)
+            except RuntimeError as e:
+                return jsonify({"error": f"Error creando nodo '{n.nombre}' en GNS3: {e}"}), 502
+
+            gns3_node_id = node_resp.get("node_id")
+            if not gns3_node_id:
+                return jsonify({"error": f"GNS3 no devolvió node_id para el nodo '{n.nombre}'"}), 502
+
+            bd_to_gns3_node_id[n.id_nodo] = gns3_node_id
+            port_counters[gns3_node_id] = 0
+
+        # 3) Crear enlaces en GNS3
+        for e in enlaces:
+            origen_gns3 = bd_to_gns3_node_id.get(e.id_nodo_origen)
+            destino_gns3 = bd_to_gns3_node_id.get(e.id_nodo_destino)
+            if not origen_gns3 or not destino_gns3:
+                # Si por alguna razón falta algún nodo, saltamos ese enlace
+                continue
+
+            # Usamos un adapter distinto por enlace, y port_number siempre 0
+            adapter_o = port_counters[origen_gns3]
+            adapter_d = port_counters[destino_gns3]
+            port_counters[origen_gns3] += 1
+            port_counters[destino_gns3] += 1
+
+            link_payload = {
+                "nodes": [
+                    {
+                        "node_id": origen_gns3,
+                        "adapter_number": adapter_o,
+                        "port_number": 0,
+                    },
+                    {
+                        "node_id": destino_gns3,
+                        "adapter_number": adapter_d,
+                        "port_number": 0,
+                    },
+                ]
+            }
+
+            try:
+                _gns3_post(f"/v2/projects/{project_id}/links", link_payload)
+            except RuntimeError as ex:
+                # No detenemos todo si un enlace falla; solo lo registramos.
+                # Si prefieres, puedes hacer return con error aquí.
+                print(f"[WARN] Error creando enlace en GNS3: {ex}")
+                
+        return jsonify(
+            {
+                "mensaje": "Topología exportada a GNS3 correctamente",
+                "gns3_project_id": project_id,
+                "gns3_server_url": GNS3_SERVER_URL,
+            }
+        ), 201
 
 
     return app

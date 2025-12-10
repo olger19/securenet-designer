@@ -215,6 +215,9 @@ function App() {
   const [topologias, setTopologias] = useState([])
   const [selectedTopologyId, setSelectedTopologyId] = useState(null)
 
+  // estado para mostrar el resultado de exportar a GNS3
+  const [gns3ExportInfo, setGns3ExportInfo] = useState(null)
+
   const [selectedNodeId, setSelectedNodeId] = useState(null)
 
   const [politicas, setPoliticas] = useState([])
@@ -272,6 +275,55 @@ function App() {
     })
     setIsConfigModalOpen(true)
   }
+
+  const handleExportarGNS3 = async () => {
+    if (!selectedTopologyId) {
+      alert('Primero selecciona una topología en la lista.')
+      return
+    }
+
+    try {
+      // limpiar estado previo
+      setGns3ExportInfo({ status: 'loading' })
+
+      const res = await fetch(
+        `http://127.0.0.1:5000/topologias/${selectedTopologyId}/exportar_gns3`,
+        {
+          method: 'POST',
+        },
+      )
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        const msg = data?.error || 'Error al exportar la topología a GNS3'
+        setGns3ExportInfo({ status: 'error', message: msg })
+        alert(msg)
+        console.error('Error al exportar a GNS3:', msg)
+        return
+      }
+
+      // Si todo bien guardar info de exportacion
+      setGns3ExportInfo({
+        status: 'ok',
+        projectId: data.gns3_project_id,
+        serverUrl: data.gns3_server_url,
+        message: data.mensaje,
+      })
+
+      alert(
+        `Topología exportada a GNS3 correctamente.\n\nProject ID: ${data.gns3_project_id}`,
+      )
+    } catch (err) {
+      console.error(err)
+      setGns3ExportInfo({
+        status: 'error',
+        message: 'Error de conexión con el backend al exportar a GNS3',
+      })
+      alert('Error de conexión al intentar exportar a GNS3.')
+    }
+  }
+
 
   const handleConfigInputChange = (e) => {
     const { name, value } = e.target
@@ -867,6 +919,14 @@ function App() {
           Eliminar topología seleccionada
         </button>
 
+        {/* Boton para GNS3 */}
+        <button
+          onClick={handleExportarGNS3}
+          style={{ display: 'block', marginBottom: '8px', background: '#0f766e', color: '#fff' }}
+        >
+          Exportar a GNS3
+        </button>
+
         {/* Panel de propiedades del nodo seleccionado */}
         <h3>Paleta de nodos</h3>
         <button
@@ -973,7 +1033,19 @@ function App() {
         >
           <h3>Topología seleccionada</h3>
           {selectedTopologyId ? (
-            <p>ID: {selectedTopologyId}</p>
+            <>
+              <p>ID: {selectedTopologyId}</p>
+              {gns3ExportInfo?.status === 'ok' && (
+                <p style={{ fontSize: '12px', opacity: 0.8 }}>
+                  Última exportación a GNS3:
+                  <br />
+                  Project ID:{' '}
+                  <span style={{ fontFamily: 'monospace' }}>
+                    {gns3ExportInfo.projectId}
+                  </span>
+                </p>
+              )}
+            </>
           ) : (
             <p>Ninguna topología seleccionada.</p>
           )}
