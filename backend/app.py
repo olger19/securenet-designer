@@ -186,9 +186,12 @@ def create_app():
         # Router de tu editor -> VPCS con varios adapters
         if tipo == "router":
             return {
-                "node_type": "vpcs",
+                "node_type": "docker",
                 "name": nombre_seguro, # Saneado
-                "properties": {}
+                "properties": {
+                    "image": "alpine",
+                    "adapters": 2, # o 4 si quiero mas interfaces
+                }
             }
 
         # Firewall -> contenedor Docker
