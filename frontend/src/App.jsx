@@ -176,7 +176,7 @@ const initialNodes = [
   {
     id: '2',
     position: { x: 200, y: 250 },
-    data: { label: 'FW1 (Firewall - DMZ)', tipo: 'firewall', zona: 'dmz' },
+    data: { label: 'FW1 (Fortigate - DMZ)', tipo: 'firewall', zona: 'dmz' },
     type: 'icon',
   },
   {
@@ -939,7 +939,7 @@ function App() {
           onClick={() => addNode('firewall', 'dmz')}
           style={{ display: 'block', marginBottom: '4px' }}
         >
-          Añadir Firewall (DMZ)
+          Añadir Fortigate (DMZ)
         </button>
         <button
           onClick={() => addNode('servidor', 'dmz')}

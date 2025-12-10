@@ -795,7 +795,7 @@ def create_app():
             p.drawString(
                 50,
                 y,
-                f"Políticas aplicadas por el firewall {firewall_nodo.nombre}:"
+                f"Políticas aplicadas por el Fortigate {firewall_nodo.nombre}:"
             )
         else:
             p.drawString(50, y, "Políticas de seguridad de la topología:")
